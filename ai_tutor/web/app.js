@@ -11,12 +11,19 @@
     sessionId: null,
     busy: false,
     images: [],          // [{id, name, dataUri, size}] 待发送的图片
+    imageGeneration: 0,
+    pendingImages: 0,
     imageCfg: { max_images: 4, max_bytes: 8388608, allowed_types: ["png", "jpg", "jpeg", "webp", "gif"] },
     visionModel: null,
+    health: null,
   };
 
   const $ = (sel) => document.querySelector(sel);
   const $$ = (sel) => Array.from(document.querySelectorAll(sel));
+  const local = {
+    get(key) { try { return localStorage.getItem("ai-tutor:" + key); } catch { return null; } },
+    set(key, value) { try { if (value) localStorage.setItem("ai-tutor:" + key, value); else localStorage.removeItem("ai-tutor:" + key); } catch { /* Storage may be disabled. Server records remain available. */ } },
+  };
 
   // ------------------------------------------------------------ 工具
   function esc(text) {
@@ -47,10 +54,10 @@
 
   function toast(message) {
     const box = document.createElement("div");
-    box.className = "notes";
-    box.innerHTML = "<div>⚠ " + esc(message) + "</div>";
-    $("#messages").prepend(box);
-    setTimeout(() => box.remove(), 6000);
+    box.className = "notification";
+    box.textContent = message;
+    $("#notifications").append(box);
+    setTimeout(() => box.remove(), 7000);
   }
 
   // ------------------------------------------------------------ 启动
@@ -60,15 +67,17 @@
     //       /?q=...&module=M2&ask=1   进入页面后自动提问
     const params = new URLSearchParams(location.search);
     const wantView = params.get("view");
+    await StudyUI.init({ notify: toast, switchView, newSession, startLearning, resumeSession });
 
     try {
       const health = await api("/api/health");
+      state.health = health;
       const dot = $("#statusDot");
       dot.className = "dot ok";
-      const usable = health.usable_models || [];
+      const usable = (health.usable_models || []).filter(n => n !== "mock");
       const sim = !usable.length;
       $("#statusText").innerHTML = sim
-        ? '离线模式 · 内置模型（功能完整，可复现）'
+        ? '离线演示 · 预设回答'
         : '已连接 · 可用模型：' + esc(usable.join("、"));
       if (health.image) state.imageCfg = Object.assign(state.imageCfg, health.image);
       state.visionModel = health.vision_model || null;
@@ -78,13 +87,15 @@
       $("#footInfo").textContent =
         health.app + " v" + health.version + " · " + health.team;
       renderAbout(health);
+      StudyUI.mode(health);
     } catch (err) {
       $("#statusDot").className = "dot bad";
       $("#statusText").textContent = "后端未响应：" + err.message;
+      $("#modeNotice").textContent = "本地服务未响应，请重新启动服务后刷新页面。";
     }
 
     try {
-      const mods = await api("/api/modules");
+      const mods = await api("/api/prompts");
       state.modules = mods.modules || [];
       state.methodology = mods.methodology || null;
       fillModules();
@@ -102,12 +113,17 @@
       state.routes = data.routes || [];
     } catch (e) { /* ignore */ }
 
+    if (state.health) renderAbout(state.health);
     renderExamples();
     loadSessions();
     loadEvals();
     if (wantView) switchView(wantView);
 
     const presetQ = params.get("q");
+    if (!presetQ && local.get("session")) {
+      await resumeSession(local.get("session"), false);
+    }
+    $("#questionInput").value = local.get("draft") || "";
     if (presetQ) {
       if (params.get("module")) setModule(params.get("module"));
       $("#questionInput").value = presetQ;
@@ -122,6 +138,49 @@
     $$(".view").forEach((v) => v.classList.toggle("active", v.id === "view-" + view));
     if (view === "records") { loadSessions(); loadEvals(); }
     if (view === "risk") { loadCases(); }
+  }
+
+  function newSession() {
+    if (state.busy) return;
+    state.sessionId = null;
+    local.set("session", "");
+    clearImages();
+    ["#m5Answers", "#m6Reply", "#m3Answer"].forEach(s => $(s).value = "");
+    $("#sessionHint").textContent = "新会话 · 课程范围会作为学习背景";
+    $("#messages").innerHTML = '<div class="empty" id="emptyState"><h3>从你卡住的地方开始</h3><p>写下问题和你的尝试，或选择一个学习例子。</p><div class="examples" id="examples"></div></div>';
+    renderExamples();
+  }
+
+  function startLearning(courseId, question, module) {
+    if (state.busy) { toast("请等当前回答完成后再切换课程"); return; }
+    newSession();
+    $("#chatCourse").value = courseId;
+    setModule(module);
+    $("#questionInput").value = question;
+    local.set("draft",question);
+    switchView("chat");
+    $("#questionInput").focus();
+  }
+
+  async function resumeSession(id, navigate = true) {
+    if (state.busy) { toast("请等当前回答完成后再切换会话"); return; }
+    try {
+      const session = await api("/api/session/" + encodeURIComponent(id));
+      state.sessionId = id; local.set("session",id);
+      clearImages();
+      $("#chatCourse").value = session.meta?.course_id || "";
+      setModule(session.module || "auto");
+      $("#messages").innerHTML = "";
+      (session.turns || []).forEach(t => {
+        appendUser(t.user_prompt, []);
+        const result = {answer:t.output_raw, question:t.user_prompt, module:t.module, prompt:t.prompt_raw,
+          turn_id:t.id, session_id:id, session, checks:t.metrics, meta:{provider:t.provider,model:t.model,simulated:!!t.simulated,degraded:!!t.degraded},
+          notes:t.degraded_reason ? [t.degraded_reason] : []};
+        const el = appendAi(resultHtml(result)); StudyUI.bindResult(el,result);
+      });
+      $("#sessionHint").textContent = "继续会话：" + session.title;
+      if (navigate) switchView("chat");
+    } catch(err) { local.set("session", ""); toast("无法恢复会话：" + err.message); }
   }
 
   function fillModules() {
@@ -161,7 +220,8 @@
       btn.addEventListener("click", () => {
         $("#questionInput").value = btn.dataset.example;
         setModule(btn.dataset.module);
-        send();
+        local.set("draft",btn.dataset.example);
+        $("#questionInput").focus();
       });
     });
   }
@@ -246,7 +306,7 @@
       <div class="answer">${fmtAnswer(result.answer)}</div>
       ${state.module === "auto" && result.meta && result.meta.preflight && result.meta.preflight.length
         ? `<div class="notes">${result.meta.preflight.map((p) => `<div>· ${esc(p)}</div>`).join("")}</div>` : ""}
-      ${checksHtml(result.checks)}
+      <details><summary>查看回答的格式检查（不能验证事实正确性或掌握程度）</summary>${checksHtml(result.checks)}</details>
       ${notes ? `<div class="notes">${notes}</div>` : ""}
       <details><summary>查看实际发送的提示词原文（${(result.prompt || "").length} 字符）</summary>
         <div class="prompt-box">${esc(result.prompt)}</div>
@@ -273,13 +333,18 @@
   }
 
   async function send() {
-    const question = $("#questionInput").value.trim();
+    let question = $("#questionInput").value.trim();
+    if (!question && state.module === "M5" && $("#m5Answers").value.trim()) question = "请根据我的诊断作答继续制定复习计划。";
+    if (!question && state.module === "M6" && $("#m6Reply").value.trim()) question = "请反馈本轮作答并继续陪练。";
+    if (!question && state.module === "M3" && $("#m3Answer").value.trim()) question = "请分析我的解题过程并定位错误。";
+    const replySelector = {M5:"#m5Answers",M6:"#m6Reply",M3:"#m3Answer"}[state.module];
+    if (replySelector && $(replySelector).value.trim()) question += "\n\n【我的作答】\n" + $(replySelector).value.trim();
     const images = state.images.map((i) => i.dataUri);
     if ((!question && !images.length) || state.busy) return;
+    if (state.pendingImages) { toast("图片还在读取，请稍后发送"); return; }
+    const attached = state.images.slice();
     $("#emptyState") && $("#emptyState").remove();
     appendUser(question || "（仅图片，请识别并解析）", state.images.slice());
-    $("#questionInput").value = "";
-    clearImages();
     setBusy(true);
     const placeholder = appendAi('<div class="msg-head"><span class="spinner"></span> 正在生成…</div>');
 
@@ -289,6 +354,7 @@
       model: $("#modelSelect").value || null,
       use_router: $("#routerToggle").checked,
       session_id: state.sessionId,
+      course_id: StudyUI.courseId(),
       images: images,
       subject: $("#m5Subject").value || "",
       days: parseInt($("#m5Days").value || "5", 10),
@@ -305,11 +371,20 @@
         body: JSON.stringify(payload),
       });
       state.sessionId = data.session_id || state.sessionId;
+      local.set("session",state.sessionId);
+      local.set("draft", "");
+      $("#questionInput").value = "";
+      clearImages();
       placeholder.innerHTML = resultHtml(data);
+      StudyUI.bindResult(placeholder,data);
+      $("#sessionHint").textContent = "当前会话：" + (data.session?.title || "学习答疑");
+      StudyUI.refresh();
+      loadSessions();
       if (state.module === "M5") $("#m5Answers").value = "";
       if (state.module === "M6") $("#m6Reply").value = "";
     } catch (err) {
-      placeholder.innerHTML = `<div class="notes"><div>✗ 调用失败：${esc(err.message)}</div></div>`;
+      state.images = attached; renderThumbs();
+      placeholder.innerHTML = `<div class="notes"><div>调用失败：${esc(err.message)}。问题与附件已保留，可再次发送。</div></div>`;
     } finally {
       setBusy(false);
       $("#messages").scrollTop = $("#messages").scrollHeight;
@@ -318,12 +393,15 @@
 
   // ------------------------------------------------------------ 图片输入
   function clearImages() {
+    state.imageGeneration += 1;
+    state.pendingImages = 0;
     state.images = [];
     renderThumbs();
     $("#fileInput").value = "";
   }
 
   function renderThumbs() {
+    $("#sendBtn").disabled = state.busy || state.pendingImages > 0;
     const box = $("#thumbs");
     box.innerHTML = state.images.map((img) => `
       <figure class="thumb" data-id="${img.id}">
@@ -352,7 +430,7 @@
     if (!files.length) return;
     const maxBytes = state.imageCfg.max_bytes || 8388608;
     const allowed = state.imageCfg.allowed_types || ["png", "jpg", "jpeg", "webp", "gif"];
-    let pending = files.length;
+    if (state.busy) return;
     files.forEach((file) => {
       const ext = (file.name.split(".").pop() || "").toLowerCase();
       if (!allowed.includes(ext)) {
@@ -363,12 +441,18 @@
         toast(`图片过大：${file.name}（${(file.size / 1048576).toFixed(1)} MB，上限 ${(maxBytes / 1048576).toFixed(0)} MB）`);
         return;
       }
-      if (state.images.length >= (state.imageCfg.max_images || 4)) {
+      if (state.images.length + state.pendingImages >= (state.imageCfg.max_images || 4)) {
         toast(`一次最多 ${state.imageCfg.max_images || 4} 张图片`);
         return;
       }
       const reader = new FileReader();
+      const generation = state.imageGeneration;
+      state.pendingImages += 1;
+      $("#sendBtn").disabled = true;
       reader.onload = () => {
+        if (generation !== state.imageGeneration) return;
+        state.pendingImages -= 1;
+        if (state.images.length >= (state.imageCfg.max_images || 4)) { toast("已达到图片数量上限"); renderThumbs(); return; }
         state.images.push({
           id: "img" + Date.now() + Math.random().toString(16).slice(2, 6),
           name: file.name || "pasted-image.png",
@@ -376,17 +460,21 @@
           dataUri: String(reader.result || ""),
         });
         renderThumbs();
-        pending -= 1;
       };
-      reader.onerror = () => toast(`读取失败：${file.name}`);
+      reader.onerror = () => {
+        if(generation !== state.imageGeneration) return;
+        state.pendingImages -= 1; renderThumbs(); toast(`读取失败：${file.name}`);
+      };
       reader.readAsDataURL(file);
     });
   }
 
   function setBusy(busy) {
     state.busy = busy;
-    $("#sendBtn").disabled = busy;
-    $("#composerHint").innerHTML = busy ? '<span class="spinner"></span> 生成中…'
+    $("#sendBtn").disabled = busy || state.pendingImages > 0;
+    ["#resetBtn", "#chatCourse", "#moduleSelect", "#modelSelect", "#routerToggle", "#questionInput", "#m5Subject", "#m5Days", "#m5Answers", "#m6Reply", "#m3Answer", "#fileInput"].forEach(s => $(s).disabled = busy);
+    $$("#examples button, .thumb-del").forEach(el => el.disabled = busy);
+    $("#composerHint").innerHTML = busy ? '<span class="spinner"></span> 正在组织讲解，通常需要 10–60 秒…'
       : "Enter 发送 · Shift+Enter 换行 · Ctrl+V 粘贴图片";
   }
 
@@ -510,10 +598,14 @@
             <div class="turns"></div></div>`).join("")
         : '<p class="hintline">暂无会话记录，去「答疑工作台」问一个问题吧。</p>';
       $$(".session-item").forEach((el) => {
+        const resume = document.createElement("button"); resume.textContent = "继续学习"; resume.className = "ghost small";
+        resume.onclick = e => { e.stopPropagation(); resumeSession(el.dataset.id); };
+        el.querySelector(".t").append(resume);
         el.addEventListener("click", async () => {
           const box = el.querySelector(".turns");
           if (box.dataset.loaded) { box.innerHTML = ""; box.dataset.loaded = ""; return; }
-          const detail = await api("/api/session/" + el.dataset.id);
+          let detail;
+          try { detail = await api("/api/session/" + el.dataset.id); } catch(err) { toast(err.message); return; }
           box.dataset.loaded = "1";
           box.innerHTML = (detail.turns || []).map((t) => `
             <div class="turn"><div class="q">Q：${esc(t.user_prompt)}</div>
@@ -602,19 +694,16 @@ python -m ai_tutor selftest            一键自检（离线、可复现）</div
         <td>${esc((r.preferred || []).join(" → "))}</td><td>${r.temperature}</td>
         <td>${esc(r.reason)}</td></tr>`).join("")}</table>
       <p class="hintline" style="margin-top:14px">
-        提示：当前若无任何 API Key，应用使用内置离线模型运行——功能完整、可复现，
-        但输出不代表任何商业模型的实际表现；在 <code>config.json</code> 填入 Key 后自动切换为真实模型。</p>`;
+        接入真实答疑：设置提供方环境变量（如 <code>DEEPSEEK_API_KEY</code>），或在本地 <code>config.json</code> 配置密钥，然后重启服务。不要提交含密钥的配置文件。离线模型只提供预设演示，不能可靠回答任意新题。<br>
+        数据与隐私：本产品用于个人本地学习，默认只监听 127.0.0.1；课程、会话、笔记保存在本地 SQLite。真实模型会接收问题、会话上下文、课程背景与图片。导出入口在「笔记与复习」。<br>
+        学习提醒：任务完成率不是掌握程度；格式检查不是事实核验。请以课程教材、独立作答与自测结果核对 AI 讲解。</p>`;
   }
 
   // ------------------------------------------------------------ 事件绑定
   function bind() {
     $$("#tabs .tab").forEach((tab) => {
       tab.addEventListener("click", () => {
-        $$("#tabs .tab").forEach((t) => t.classList.toggle("active", t === tab));
-        const view = tab.dataset.view;
-        $$(".view").forEach((v) => v.classList.toggle("active", v.id === "view-" + view));
-        if (view === "records") { loadSessions(); loadEvals(); }
-        if (view === "risk") { loadCases(); }
+        switchView(tab.dataset.view);
       });
     });
 
@@ -622,6 +711,7 @@ python -m ai_tutor selftest            一键自检（离线、可复现）</div
 
     // 图片输入：点击选择 / 拖拽 / 粘贴
     $("#dropzone").addEventListener("click", () => $("#fileInput").click());
+    $("#dropzone").addEventListener("keydown", e => { if(e.key === "Enter" || e.key === " ") { e.preventDefault(); $("#fileInput").click(); } });
     $("#fileInput").addEventListener("change", (e) => {
       addFiles(e.target.files);
       e.target.value = "";
@@ -642,24 +732,23 @@ python -m ai_tutor selftest            一键自检（离线、可复现）</div
       if (e.dataTransfer && e.dataTransfer.files) addFiles(e.dataTransfer.files);
     });
     document.addEventListener("paste", (e) => {
-      if (!e.clipboardData) return;
+      if (!e.clipboardData || !$("#view-chat").classList.contains("active") || state.busy) return;
       const files = Array.from(e.clipboardData.files || []);
       const items = Array.from(e.clipboardData.items || [])
         .filter((it) => it.kind === "file" && it.type.startsWith("image/"))
         .map((it) => it.getAsFile())
         .filter(Boolean);
-      const all = files.concat(items);
+      const all = files.length ? files : items;
       if (all.length) { e.preventDefault(); addFiles(all); }
     });
 
     $("#askForm").addEventListener("submit", (e) => { e.preventDefault(); send(); });
     $("#questionInput").addEventListener("keydown", (e) => {
-      if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); }
+      if (e.key === "Enter" && !e.shiftKey && !e.isComposing) { e.preventDefault(); send(); }
     });
+    $("#questionInput").addEventListener("input", e => local.set("draft",e.target.value));
     $("#resetBtn").addEventListener("click", () => {
-      state.sessionId = null;
-      clearImages();
-      $("#messages").innerHTML = '<div class="empty"><h3>会话已重置</h3><p>可以开始新的提问了。</p></div>';
+      newSession();
     });
     $$(".risk-actions button").forEach((btn) => {
       btn.addEventListener("click", () => runRisk(btn.dataset.risk, btn));

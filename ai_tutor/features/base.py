@@ -226,6 +226,7 @@ class FeatureContext:
     #: 评测层内部使用：True 时不套用模块的精细提示（用于"无约束提示"消融对照）。
     #: 应用对外**始终**使用精细提示，该开关不会暴露给用户界面。
     plain_prompt: bool = False
+    study_context: str = ""
 
     @classmethod
     def create(cls, config: Optional[Dict[str, Any]] = None, storage: Optional[Storage] = None,
@@ -363,6 +364,8 @@ class BaseFeature:
                 parts.append(extra)
             return "\n".join(p for p in parts if p)
         parts.append(self.spec.fine_prompt())
+        if ctx.study_context:
+            parts.append("【学习背景（学生填写）】" + ctx.study_context)
         # 运行期约束（信息不足提示、学生作答、轮次状态等）放在模块提示词之后，
         # 使其成为上下文里最后、最新鲜的指令——实测这样能显著提高真实模型的遵守率。
         if extra:
@@ -399,10 +402,10 @@ class BaseFeature:
             return []
         out: List[Message] = []
         for turn in ctx.storage.recent_turns(ctx.session_id, limit=limit):
+            if turn.get("user_prompt"):
+                out.append(Message("user", turn["user_prompt"]))
             if turn.get("output_raw"):
                 out.append(Message("assistant", turn["output_raw"]))
-            elif turn.get("user_prompt"):
-                out.append(Message("user", turn["user_prompt"]))
         return out
 
     def resolve_model(self, ctx: FeatureContext, question: str) -> Tuple[Optional[str], Dict[str, Any]]:

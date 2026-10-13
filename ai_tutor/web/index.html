@@ -12,7 +12,7 @@
     <div class="logo">AI</div>
     <div>
       <h1>大学生期末复习 AI 答疑助手</h1>
-      <p class="sub">智能驱动的个性化学习解决方案 · 第二组：李明轩　韩武晋　郑志</p>
+      <p class="sub">把每一次答疑，变成下一次会做。</p>
     </div>
   </div>
   <div class="status" id="status">
@@ -21,7 +21,10 @@
 </header>
 
 <nav class="tabs" id="tabs">
-  <button class="tab active" data-view="chat">答疑工作台</button>
+  <button class="tab active" data-view="study">今日学习</button>
+  <button class="tab" data-view="courses">课程与计划</button>
+  <button class="tab" data-view="notebook">笔记与复习</button>
+  <button class="tab" data-view="chat">答疑工作台</button>
   <button class="tab" data-view="library">提示词库</button>
   <button class="tab" data-view="risk">风险实证</button>
   <button class="tab" data-view="records">会话与记录</button>
@@ -29,22 +32,50 @@
 </nav>
 
 <main>
+<div id="notifications" role="status" aria-live="polite"></div>
+<section class="view active" id="view-study">
+  <div class="study-hero">
+    <div><p class="eyebrow">YOUR LEARNING SPACE / 学习工作区</p><h2>今天，向学会再走一步。</h2>
+      <p>把大目标拆成小任务。先尝试，再答疑，最后用自己的话复述。</p>
+      <div class="actions"><button class="primary" id="homeCreate">添加一门课程</button><button id="homeAsk">开始答疑</button></div>
+    </div><div class="hero-mark" aria-hidden="true">学<br><span>有迹可循</span></div>
+  </div>
+  <div id="modeNotice" class="mode-notice" role="status">正在检查模型状态…</div>
+  <div id="studySummary" class="kpis"></div>
+  <div class="study-columns">
+    <section class="panel"><div class="panel-head"><h2>接下来学什么</h2><button class="ghost small" id="refreshStudy">刷新</button></div><div id="todayTasks">正在加载学习任务…</div></section>
+    <section class="panel"><h2>让知识留得更久</h2><div id="todayReviews"></div><div id="recentLearning"></div></section>
+  </div>
+</section>
+<section class="view" id="view-courses">
+  <div class="page-heading"><div><p class="eyebrow">PLAN / 课程与计划</p><h2>按你的节奏，安排复习。</h2><p>填写真实的考试范围和可用时间，计划可以随时调整。</p></div><button class="primary" id="newCourse">添加课程</button></div>
+  <div id="courseList"></div>
+  <section class="panel" id="courseDetail" hidden></section>
+</section>
+<section class="view" id="view-notebook">
+  <div class="page-heading"><div><p class="eyebrow">RECALL / 笔记与复习</p><h2>合上答案，也能说清楚。</h2><p>先回忆再揭晓，自评决定下次提醒：还不会 1 天、有点难 2 天、已掌握至少 3 天。</p></div><div class="actions"><button id="exportStudy">导出学习数据</button><button class="primary" id="newNote">写一张卡片</button></div></div>
+  <div class="filter-row"><label for="noteSearch">搜索笔记</label><input type="search" id="noteSearch" placeholder="标题、问题或错因…"><label for="noteCourse">课程</label><select id="noteCourse"><option value="">全部课程</option></select><label class="checkbox"><input type="checkbox" id="dueOnly">只看待复习</label></div>
+  <p class="hintline">AI 回答保留原始来源与演示标记。复习自评不代表客观测验成绩；导出含你的学习内容，请妥善保存。</p>
+  <div id="noteList"></div>
+</section>
 <!-- ======================= 答疑工作台 ======================= -->
-<section class="view active" id="view-chat">
+<section class="view" id="view-chat">
   <div class="layout">
     <aside class="panel controls">
       <h2>问答设置</h2>
+      <label for="chatCourse">当前课程</label><select id="chatCourse"><option value="">自由答疑</option></select>
+      <p class="hintline" id="sessionHint">新会话 · 课程范围会作为学习背景</p>
 
-      <label>功能模块 <span class="hint">M1–M6 一一对应六大痛点</span></label>
+      <label for="moduleSelect">学习方式 <span class="hint">解析 / 梳理 / 错因 / 讲解 / 诊断 / 陪练</span></label>
       <select id="moduleSelect"></select>
       <p class="mod-desc" id="moduleDesc">自动识别：按你的提问内容路由到最合适的模块</p>
 
-      <label>模型</label>
+      <label for="modelSelect">模型</label>
       <select id="modelSelect"></select>
       <label class="checkbox"><input type="checkbox" id="routerToggle"> 启用任务路由（按任务类型自动选模型）</label>
 
       <label>图片输入 <span class="hint" id="visionHint">支持题目照片 / 截图 / 手写演算</span></label>
-      <div class="dropzone" id="dropzone">
+      <div class="dropzone" id="dropzone" role="button" tabindex="0" aria-label="选择题目图片">
         <input type="file" id="fileInput" accept="image/png,image/jpeg,image/webp,image/gif" multiple hidden>
         <div class="dz-inner">
           <span class="dz-icon">＋</span>
@@ -55,23 +86,23 @@
       <p class="hintline" id="imageHint" hidden></p>
 
       <div class="row" id="extraM5" hidden>
-        <div><label>科目</label><input id="m5Subject" placeholder="高等数学"></div>
-        <div><label>剩余天数</label><input id="m5Days" type="number" value="5" min="1" max="30"></div>
+        <div><label for="m5Subject">科目</label><input id="m5Subject" placeholder="高等数学"></div>
+        <div><label for="m5Days">剩余天数</label><input id="m5Days" type="number" value="5" min="1" max="30"></div>
       </div>
       <div id="extraM5b" hidden>
-        <label>诊断作答（提交后进入第二阶段：生成个性化计划）</label>
+        <label for="m5Answers">诊断作答（提交后进入第二阶段：生成个性化计划）</label>
         <textarea id="m5Answers" rows="4" placeholder="把 5 道诊断题的作答贴在这里；留空则只输出诊断题"></textarea>
       </div>
       <div id="extraM6" hidden>
-        <label>你的本轮作答（口语/背诵内容）</label>
+        <label for="m6Reply">你的本轮作答（口语/背诵内容）</label>
         <textarea id="m6Reply" rows="4" placeholder="直接写下你这轮的答案；留空表示开始新一轮练习"></textarea>
       </div>
       <div id="extraM3" hidden>
-        <label>你的解题过程（用于错因定位）</label>
+        <label for="m3Answer">你的解题过程（用于错因定位）</label>
         <textarea id="m3Answer" rows="4" placeholder="贴出你的完整解答步骤，AI 才能定位到第几步出错"></textarea>
       </div>
 
-      <button class="ghost" id="resetBtn">清空会话上下文</button>
+      <button class="ghost" id="resetBtn">开始新会话</button>
     </aside>
 
     <section class="panel chat">
@@ -83,7 +114,7 @@
         </div>
       </div>
       <form class="composer" id="askForm">
-        <textarea id="questionInput" rows="3" placeholder="输入你的问题（可附带题目图片），Enter 发送，Shift+Enter 换行…"></textarea>
+        <label class="sr-only" for="questionInput">你的学习问题</label><textarea id="questionInput" rows="3" maxlength="8000" placeholder="写下题目，以及你已经尝试的方法（可附带图片）…"></textarea>
         <div class="composer-bar">
           <span class="hint" id="composerHint"></span>
           <button type="submit" id="sendBtn">发送</button>
@@ -162,6 +193,8 @@
   <span>本地运行，零第三方依赖，离线可复现</span>
 </footer>
 
+<dialog id="studyDialog" aria-labelledby="dialogTitle"><form id="studyDialogForm"><div class="panel-head"><h2 id="dialogTitle"></h2><button type="button" id="closeDialog" aria-label="关闭">×</button></div><div id="dialogFields"></div><p id="dialogError" class="notes" role="alert"></p><div class="actions"><button type="submit" class="primary" id="saveDialog">保存</button><button type="button" id="cancelDialog">取消</button></div></form></dialog>
+<script src="/static/workspace.js"></script>
 <script src="/static/app.js"></script>
 </body>
 </html>

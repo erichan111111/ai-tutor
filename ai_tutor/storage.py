@@ -222,9 +222,10 @@ class Storage:
         self.touch_session(session_id)
         return self._row("SELECT * FROM turns WHERE id = ?", [turn_id])  # type: ignore[return-value]
 
-    def list_turns(self, session_id: str, limit: int = 200) -> List[Dict[str, Any]]:
-        return self._rows("SELECT * FROM turns WHERE session_id = ? ORDER BY seq ASC LIMIT ?",
-                          [session_id, limit])
+    def list_turns(self, session_id: str, limit: Optional[int] = None) -> List[Dict[str, Any]]:
+        sql = "SELECT * FROM turns WHERE session_id = ? ORDER BY seq ASC"
+        return self._rows(sql + (" LIMIT ?" if limit is not None else ""),
+                          [session_id, limit] if limit is not None else [session_id])
 
     def recent_turns(self, session_id: str, limit: int = 8) -> List[Dict[str, Any]]:
         rows = self._rows("SELECT * FROM turns WHERE session_id = ? ORDER BY seq DESC LIMIT ?",

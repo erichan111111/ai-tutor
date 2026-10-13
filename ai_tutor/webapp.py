@@ -35,6 +35,7 @@ import os
 import sys
 import threading
 import webbrowser
+from datetime import date
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
@@ -97,21 +98,44 @@ class Handler(BaseHTTPRequestHandler):
 
     def _read_body(self) -> Dict[str, Any]:
         length = int(self.headers.get("Content-Length") or 0)
+        if length > 48 * 1024 * 1024:
+            raise ValueError("请求过大，请减少图片数量或大小")
         if length <= 0:
             return {}
         raw = self.rfile.read(length)
         try:
             data = json.loads(raw.decode("utf-8"))
-            return data if isinstance(data, dict) else {"value": data}
+            if not isinstance(data, dict):
+                raise ValueError("请求内容应为 JSON 对象")
+            return data
         except (json.JSONDecodeError, UnicodeDecodeError):
-            return {}
+            raise ValueError("请求不是有效的 JSON") from None
 
     # ------------------------------------------------------------ 路由
+    def _valid_host(self) -> bool:
+        # Loopback deployments must not expose local records through DNS rebinding.
+        if self.server.server_address[0] not in ("127.0.0.1", "::1"):
+            return True
+        try:
+            host = urlparse("http://" + self.headers.get("Host", ""))
+            return host.hostname in ("127.0.0.1", "localhost", "::1") and (host.port or 80) == self.server.server_port
+        except ValueError:
+            return False
+
     def do_GET(self) -> None:  # noqa: N802
+        if not self._valid_host():
+            self._send_json({"error": "请通过本机地址访问应用"}, 403)
+            return
         parsed = urlparse(self.path)
         path = parsed.path.rstrip("/") or "/"
         query = {k: v[0] for k, v in parse_qs(parsed.query).items()}
         try:
+            if path == "/api/study":
+                self._send_json(self.service.study.snapshot(query.get("today", date.today().isoformat())))
+                return
+            if path == "/api/study/export":
+                self._send_json(self.service.study.export())
+                return
             if path == "/":
                 self._send_file(STATIC_DIR / "index.html")
                 return
@@ -160,14 +184,54 @@ class Handler(BaseHTTPRequestHandler):
                                 content_type="text/markdown; charset=utf-8")
                 return
             self._send_json({"error": f"未知路径 {path}"}, 404)
+        except LookupError as exc:
+            self._send_json({"error": str(exc)}, 404)
+        except ValueError as exc:
+            self._send_json({"error": str(exc)}, 400)
         except Exception as exc:  # noqa: BLE001
             self._send_json({"error": str(exc)}, 500)
 
     def do_POST(self) -> None:  # noqa: N802
+        if not self._valid_host():
+            self._send_json({"error": "请通过本机地址访问应用"}, 403)
+            return
         parsed = urlparse(self.path)
         path = parsed.path.rstrip("/") or "/"
-        payload = self._read_body()
         try:
+            origin = self.headers.get("Origin")
+            if origin and origin != "http://" + self.headers.get("Host", ""):
+                self._send_json({"error": "请从本应用页面提交请求"}, 403)
+                return
+            payload = self._read_body()
+            today = payload.get("today", date.today().isoformat())
+            study = self.service.study
+            if path == "/api/study/course":
+                self._send_json(study.save_course(payload, payload.get("id")))
+                return
+            if path == "/api/study/archive":
+                self._send_json(study.archive_course(payload.get("course_id"), payload.get("archived")))
+                return
+            if path == "/api/study/plan":
+                self._send_json(study.plan(payload.get("course_id"), today))
+                return
+            if path == "/api/study/task":
+                self._send_json(study.add_task(payload))
+                return
+            if path == "/api/study/task/update":
+                self._send_json(study.update_task(payload.get("id"), {k: v for k, v in payload.items() if k != "id"}))
+                return
+            if path == "/api/study/note":
+                self._send_json(study.add_note(payload, today))
+                return
+            if path == "/api/study/note/update":
+                self._send_json(study.edit_note(payload.get("id"), payload))
+                return
+            if path == "/api/study/note/delete":
+                self._send_json(study.delete_note(payload.get("id")))
+                return
+            if path == "/api/study/review":
+                self._send_json(study.review(payload.get("note_id"), payload.get("rating"), today))
+                return
             if path == "/api/ask":
                 question = str(payload.get("question", "")).strip()
                 images = payload.get("images") or payload.get("image") or None
@@ -185,6 +249,7 @@ class Handler(BaseHTTPRequestHandler):
                     temperature=payload.get("temperature"),
                     images=images,
                     subject=payload.get("subject", ""),
+                    course_id=payload.get("course_id") or None,
                     days=int(payload.get("days", 5) or 5),
                     student_answer=payload.get("student_answer", ""),
                     answers=payload.get("answers", ""),
@@ -222,6 +287,10 @@ class Handler(BaseHTTPRequestHandler):
                     module=payload.get("module", "")))
                 return
             self._send_json({"error": f"未知路径 {path}"}, 404)
+        except LookupError as exc:
+            self._send_json({"error": str(exc)}, 404)
+        except ValueError as exc:
+            self._send_json({"error": str(exc)}, 400)
         except Exception as exc:  # noqa: BLE001
             self._send_json({"error": str(exc)}, 500)
 
@@ -247,7 +316,7 @@ def serve(host: str = "127.0.0.1", port: int = 8848, open_browser: bool = False,
     print(f"  Web 界面：{url}")
     print(f"  数据目录：{(service or get_service()).data_dir}")
     if not (service or get_service()).client.usable_names():
-        print("  提示：当前未配置 API Key，使用内置离线模型运行（功能完整、可复现）。")
+        print("  提示：当前未配置 API Key，答疑为离线预设演示；课程与复习记录可正常使用。")
     print("  按 Ctrl+C 停止服务。")
     print("=" * 74)
     if open_browser:

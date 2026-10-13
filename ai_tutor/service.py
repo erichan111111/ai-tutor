@@ -18,6 +18,7 @@ from .llm.registry import LLMClient, get_client
 from .llm.router import TaskRouter
 from .prompts import FIVE_ELEMENTS, STRUCTURE_PATTERNS, detect_module, get_module, list_modules
 from .storage import Storage
+from .study import StudyWorkspace
 
 
 class AgentService:
@@ -30,6 +31,7 @@ class AgentService:
         self.storage = storage or Storage(self.data_dir / "ai_tutor.db")
         self.client = client or get_client(self.config)
         self.router = TaskRouter(self.client)
+        self.study = StudyWorkspace(self.storage)
 
     # ------------------------------------------------------------ 基础信息
     def health(self) -> Dict[str, Any]:
@@ -109,6 +111,16 @@ class AgentService:
         图片通过 `images` 传入：支持本地路径、base64、data URI 或它们的列表。
         """
         question = (question or "").strip()
+        session = self.storage.get_session(session_id) if session_id else None
+        if session_id and not session:
+            raise LookupError("会话不存在，请开始新会话")
+        course_id = kwargs.get("course_id") or None
+        if session:
+            bound_course = session["meta"].get("course_id")
+            if course_id and course_id != bound_course:
+                raise ValueError("切换课程需要开始新会话")
+            course_id = bound_course
+        course = self.study.course(course_id) if course_id else None
         has_images = bool(images)
         if not question and not has_images:
             raise ValueError("question 不能为空")
@@ -119,6 +131,9 @@ class AgentService:
             storage=self.storage, client=self.client, config=self.config, router=self.router,
             model=model, session_id=session_id, use_router=use_router, temperature=temperature,
             plain_prompt=bool(kwargs.get("plain_prompt", False)),
+            study_context=(f"课程：{course['name']}；考试日期：{course['exam_date']}；"
+                           f"目标：{course['goal']}；复习范围：{'、'.join(course['topics'])}。"
+                           "结合范围讲解；先引导学生尝试，不将计划完成度当作掌握程度。") if course else "",
         )
         feature = get_feature(module_id)
         common = {"images": images}
@@ -150,6 +165,11 @@ class AgentService:
         else:
             result = feature.ask(question, ctx, save=save, **common)
 
+        if course and result.session_id:
+            ctx.update_session_meta({"course_id": course_id})
+            self.storage._exec("UPDATE sessions SET subject=? WHERE id=?", [course["name"], result.session_id])
+        if not session_id and result.session_id:
+            self.storage._exec("UPDATE sessions SET title=? WHERE id=?", [question[:60], result.session_id])
         payload = result.to_dict()
         payload["session"] = self.storage.get_session(result.session_id)
         return payload

@@ -9,6 +9,6 @@
 
 __all__ = ["__version__", "APP_NAME"]
 
-__version__ = "1.0.0"
+__version__ = "1.2.0"
 APP_NAME = "大学生期末复习 AI 答疑助手"
 TEAM = "第二组：李明轩　韩武晋　郑志"

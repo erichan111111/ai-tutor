@@ -1,0 +1,26 @@
+name: Offline product checks
+on: [push, pull_request]
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python: ['3.10', '3.14']
+    env:
+      PYTHONUTF8: '1'
+      AI_TUTOR_DATA_DIR: data/tmp/ci
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Persistent learning and HTTP regression tests
+        run: python -m unittest discover -s tests -p 'test_*.py' -v
+      - name: Existing offline capability selftest
+        run: python -m ai_tutor selftest
+      - name: Existing module and image smoke test
+        run: python tests/smoke_test.py
+      - name: Frontend syntax
+        run: |
+          node --check ai_tutor/web/app.js
+          node --check ai_tutor/web/workspace.js

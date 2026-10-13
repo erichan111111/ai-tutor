@@ -2,8 +2,9 @@
 
 import sys
 import traceback
+from pathlib import Path
 
-sys.path.insert(0, r"D:\project")
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from ai_tutor.prompts import get_module, list_modules, prompt_library_markdown  # noqa: E402
 from ai_tutor.service import AgentService  # noqa: E402
