@@ -42,6 +42,20 @@ class OpenAICompatProvider(LLMProvider):
             "temperature": temperature,
             "max_tokens": max_tokens,
         }
+        # 推理强度 / 思维链开关（DeepSeek-V4 等推理型模型支持）。在 config.json 对应提供方下写：
+        #   "reasoning_effort": "low" | "medium" | "high"
+        #   "thinking": { "type": "disabled" }      ← 直接关掉思维链，答疑场景最快
+        # 实测（deepseek-flash，同一道"一句话解释导数"）：
+        #   默认          0.8s / 输出 74 token / 思维链 98 字
+        #   thinking 关闭 1.3s / 输出 25 token / 思维链 0 字
+        # 注意：真正决定耗时的是**我的精细提示要求长输出**（六大模块契约 + 段落标记），
+        # 简单问题在精细提示下也会产出 1900+ 字，因此这里只是把"额外开销"关掉。
+        effort = (self.extra or {}).get("reasoning_effort")
+        if effort:
+            payload["reasoning_effort"] = effort
+        thinking = (self.extra or {}).get("thinking")
+        if thinking:
+            payload["thinking"] = thinking
         if json_schema and self.supports_json_mode:
             # 注意：部分提供方（实测 DeepSeek）在使用 response_format=json_object 时
             # 要求提示词中必须出现 "json" 字样，否则直接返回 400。

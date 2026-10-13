@@ -146,9 +146,19 @@ class LLMClient:
 # 构造
 # ----------------------------------------------------------------------
 
+#: 允许直接写在提供方配置顶层的透传参数（会自动并入 extra 传给请求体）。
+#: 这样用户不必写成嵌套的 "extra": {...}，配置更直观：
+#:   "deepseek": { "model": "deepseek-flash", "reasoning_effort": "low", ... }
+_EXTRA_PASSTHROUGH = ("reasoning_effort", "thinking", "top_p", "frequency_penalty",
+                      "presence_penalty", "seed", "stop", "headers")
+
+
 def _build_provider(name: str, cfg: Dict[str, Any]) -> LLMProvider:
     timeout = int(cfg.get("timeout", 60))
-    extra = cfg.get("extra") or {}
+    extra = dict(cfg.get("extra") or {})
+    for key in _EXTRA_PASSTHROUGH:
+        if key in cfg and key not in extra:
+            extra[key] = cfg[key]
     vision = bool(cfg.get("vision", False))
     if name == "mock":
         return MockProvider(cfg.get("model") or "mock-offline", extra=extra)

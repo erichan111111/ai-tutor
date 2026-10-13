@@ -25,8 +25,10 @@
   <button class="tab" data-view="courses">课程与计划</button>
   <button class="tab" data-view="notebook">笔记与复习</button>
   <button class="tab" data-view="chat">答疑工作台</button>
-  <button class="tab" data-view="library">提示词库</button>
-  <button class="tab" data-view="risk">风险实证</button>
+  <!-- 提示词库 / 风险实证：按需求从界面隐藏，后端接口与 CLI 命令保持可用
+       （python -m ai_tutor prompt show M1 / risk run）。要恢复界面入口，删掉 hidden 即可。 -->
+  <button class="tab" data-view="library" hidden>提示词库</button>
+  <button class="tab" data-view="risk" hidden>风险实证</button>
   <button class="tab" data-view="records">会话与记录</button>
   <button class="tab" data-view="about">项目说明</button>
 </nav>
@@ -124,8 +126,8 @@
   </div>
 </section>
 
-<!-- ======================= 提示词库 ======================= -->
-<section class="view" id="view-library">
+<!-- ======================= 提示词库（界面已隐藏，代码保留） ======================= -->
+<section class="view" id="view-library" hidden>
   <div class="panel">
     <h2>提示词设计方法论：五要素框架</h2>
     <div id="methodology"></div>
@@ -138,8 +140,8 @@
   </div>
 </section>
 
-<!-- ======================= 风险实证 ======================= -->
-<section class="view" id="view-risk">
+<!-- ======================= 风险实证（界面已隐藏，代码保留） ======================= -->
+<section class="view" id="view-risk" hidden>
   <div class="panel">
     <h2>第三阶段 · 风险实证分析</h2>
     <p class="hintline">

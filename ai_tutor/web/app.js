@@ -131,13 +131,31 @@
     }
   }
 
+  // 只统计"界面上真正可见"的 tab：被 hidden 隐藏的入口（如提示词库 / 风险实证）
+  // 虽然仍在 DOM 中能被查到，但不应再把用户带到那个视图——否则视图会显示为空白。
+  function visibleTabs() {
+    return $$("#tabs .tab").filter((t) => !t.hidden && !t.hasAttribute("hidden"));
+  }
+
   function switchView(view) {
-    const tab = $$("#tabs .tab").find((t) => t.dataset.view === view);
-    if (!tab) return;
-    $$("#tabs .tab").forEach((t) => t.classList.toggle("active", t === tab));
-    $$(".view").forEach((v) => v.classList.toggle("active", v.id === "view-" + view));
-    if (view === "records") { loadSessions(); loadEvals(); }
-    if (view === "risk") { loadCases(); }
+    const tabs = visibleTabs();
+    if (!tabs.length) return;
+    const tab = tabs.find((t) => t.dataset.view === view) || tabs[0];  // 未知视图回退到首个可见视图
+    tabs.forEach((t) => t.classList.toggle("active", t === tab));
+    const target = "view-" + tab.dataset.view;
+    let matched = false;
+    $$(".view").forEach((v) => {
+      const on = v.id === target;
+      if (on) matched = true;
+      v.classList.toggle("active", on);
+    });
+    // 兜底：万一目标视图不存在，也不能让页面变成全空白
+    if (!matched) {
+      const first = $("#view-" + tabs[0].dataset.view);
+      if (first) first.classList.add("active");
+    }
+    if (tab.dataset.view === "records") { loadSessions(); loadEvals(); }
+    if (tab.dataset.view === "risk") { loadCases(); }
   }
 
   function newSession() {

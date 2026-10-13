@@ -1,3 +1,5 @@
+# ---- 本地真实配置（含 API Key）：绝不入库 ----
+config.json
 # ============================================================
 #  大学生期末复习 AI 答疑助手 —— Git 忽略规则
 # ============================================================
@@ -41,6 +43,8 @@ deliverables/**/_raw/
 deliverables/**/risk_pair-*
 deliverables/**/repetition-*
 deliverables/**/comparison-*
+# 演示用"拍照题图"属于本地演示素材，不出现在正式交付中
+deliverables/演示素材/
 deliverables/_tmp/
 *.tmp
 
