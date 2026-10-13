@@ -20,6 +20,7 @@ import base64
 import json
 import subprocess
 import sys
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Sequence, Tuple
@@ -55,6 +56,13 @@ class PushPlan:
 
 
 def should_include(path: Path) -> bool:
+    """是否应该上传。
+
+    两道闸门：
+      1) 内置黑名单（密钥、数据库、虚拟环境等）——即便 .gitignore 被误改也拦得住；
+      2) **真正解析 .gitignore**——上一版只用了内置黑名单，导致
+         `deliverables/**/risk_pair-*.json` 这类体积很大的评测中间产物被上传。
+    """
     rel = path.relative_to(ROOT)
     if any(part in EXCLUDE_DIRS for part in rel.parts):
         return False
@@ -64,7 +72,48 @@ def should_include(path: Path) -> bool:
         return False
     if any(path.name.startswith(p) for p in EXCLUDE_PREFIX):
         return False
-    return True
+    return not _ignored_by_gitignore(rel.as_posix())
+
+
+_IGNORE_CACHE: Optional[List[str]] = None
+
+
+def _gitignore_patterns() -> List[str]:
+    """读取 .gitignore 的有效模式（去掉注释、空行与取反规则）。"""
+    global _IGNORE_CACHE
+    if _IGNORE_CACHE is None:
+        patterns: List[str] = []
+        gi = ROOT / ".gitignore"
+        if gi.exists():
+            for line in gi.read_text(encoding="utf-8").splitlines():
+                line = line.strip()
+                if not line or line.startswith("#") or line.startswith("!"):
+                    continue
+                patterns.append(line)
+        _IGNORE_CACHE = patterns
+    return _IGNORE_CACHE
+
+
+def _ignored_by_gitignore(rel_posix: str) -> bool:
+    """按 .gitignore 的常用语法判断路径是否被忽略（支持 **、目录模式与文件名模式）。"""
+    import fnmatch
+
+    fname = rel_posix.rsplit("/", 1)[-1]
+    for pattern in _gitignore_patterns():
+        pat = pattern.lstrip("/")
+        if pat.endswith("/"):
+            base = pat.rstrip("/")
+            if rel_posix == base or rel_posix.startswith(base + "/"):
+                return True
+            continue
+        if fnmatch.fnmatch(rel_posix, pat):
+            return True
+        if "/" not in pat:
+            # 单段模式：匹配任意层级下的同名文件或同名目录
+            if fnmatch.fnmatch(fname, pat) or rel_posix == pat \
+                    or rel_posix.startswith(pat + "/"):
+                return True
+    return False
 
 
 def build_plan() -> PushPlan:
@@ -91,22 +140,45 @@ def run_gh(args: Sequence[str], *, stdin: Optional[str] = None,
     return proc.returncode, out.strip()
 
 
-def gh_json(args: Sequence[str], payload: Optional[dict] = None) -> dict:
-    """带 JSON body 的 gh api 调用（body 写入临时文件，避免中文与引号问题）。"""
+def gh_json(args: Sequence[str], payload: Optional[dict] = None,
+            retries: int = 4, label: str = "") -> dict:
+    """带 JSON body 的 gh api 调用（body 写入临时文件，避免中文与引号问题）。
+
+    网络不稳时（`api.github.com` 偶发 EOF / 连接重置）自动指数退避重试，
+    否则像上传大 PNG 这样的操作失败一次就得整体重来。
+    """
     tmp = ROOT / ".gh-payload.json"
-    cmd = ["api"] + list(args)
     if payload is not None:
         tmp.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
-        cmd += ["--input", str(tmp)]
+    last_err = ""
     try:
-        code, out = run_gh(cmd)
+        for attempt in range(1, retries + 1):
+            cmd = ["api"] + list(args)
+            if payload is not None:
+                cmd += ["--input", str(tmp)]
+            code, out = run_gh(cmd, check=False)
+            if code == 0:
+                try:
+                    return json.loads(out) if out else {}
+                except json.JSONDecodeError:
+                    return {"_raw": out}
+            last_err = out
+            transient = any(k in out.lower() for k in
+                            ("eof", "connection reset", "timeout", "timed out",
+                             "502", "503", "504", "temporarily unavailable",
+                             "unexpected end of json"))
+            if not transient or attempt == retries:
+                break
+            wait = 2 ** attempt
+            print(f"    网络异常，{wait}s 后重试（{attempt}/{retries - 1}）"
+                  f"{'：' + label if label else ''}")
+            time.sleep(wait)
     finally:
         if tmp.exists():
             tmp.unlink()
-    try:
-        return json.loads(out) if out else {}
-    except json.JSONDecodeError:
-        return {"_raw": out}
+    if payload is not None and last_err:
+        raise RuntimeError(f"gh api {args[0]} 失败：{last_err[:400]}")
+    return {"_raw": last_err}
 
 
 def _branch_exists(full: str, branch: str) -> bool:
@@ -184,12 +256,14 @@ def main() -> int:
         data = path.read_bytes()
         is_binary = b"\x00" in data[:8000]
         if is_binary:
-            blob = gh_json([f"repos/{full}/git/blobs", "-f", "encoding=base64"],
+            blob = gh_json([f"repos/{full}/git/blobs"],
                            {"encoding": "base64",
-                            "content": base64.b64encode(data).decode("ascii")})
+                            "content": base64.b64encode(data).decode("ascii")},
+                           label=rel)
         else:
             blob = gh_json([f"repos/{full}/git/blobs"],
-                           {"encoding": "utf-8", "content": data.decode("utf-8")})
+                           {"encoding": "utf-8", "content": data.decode("utf-8")},
+                           label=rel)
         sha = blob.get("sha")
         if not sha:
             print(f"  失败：{rel} → {str(blob)[:200]}")

@@ -36,12 +36,11 @@ data/tmp/
 *.log
 
 # ---- 评测中间产物（正式报告见 deliverables/ 下的图解报告与 Excel）----
-deliverables/**/risk_pair-*.json
-deliverables/**/risk_pair-*.md
-deliverables/**/repetition-*.json
-deliverables/**/repetition-*.md
-deliverables/**/comparison-*.json
-deliverables/**/comparison-*.md
+# `_raw/` 是 report assets 存放过程报告的目录：体积大且属于过程数据，不入库
+deliverables/**/_raw/
+deliverables/**/risk_pair-*
+deliverables/**/repetition-*
+deliverables/**/comparison-*
 deliverables/_tmp/
 *.tmp
 

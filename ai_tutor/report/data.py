@@ -275,8 +275,13 @@ def collect_assets(svc: AgentService, *, mode: str = "auto", rounds: int = 3,
       · "auto"    —— 有可用真实模型就实测，否则用已存报告，再否则离线复现
       · "online"  —— 强制现场实测（需要 API Key）
       · "offline" —— 强制使用内置离线模型
+
+    注意：评测过程会产出 `risk_pair-*` / `repetition-*` 这类**中间报告**，
+    体积大且属于过程数据，因此统一写到 `output_dir/_raw/` 子目录，
+    避免与真正要交付的图解读物（PNG / Excel / 图文报告）混在一起。
     """
     outdir = Path(output_dir) if output_dir else None
+    raw_dir = (outdir / "_raw") if outdir else None
     usable = [n for n in svc.client.usable_names() if n != "mock"]
     real_model = usable[0] if usable else None
 
@@ -287,13 +292,13 @@ def collect_assets(svc: AgentService, *, mode: str = "auto", rounds: int = 3,
         use_online = False
 
     if use_online and real_model:
-        bundle = _collect_online(svc, real_model, rounds, outdir)
+        bundle = _collect_online(svc, real_model, rounds, raw_dir)
     else:
         stored = load_bundle_from_reports(svc)
         if mode == "auto" and stored is not None and stored.source == "online":
             bundle = stored
         else:
-            bundle = _collect_offline(svc, rounds, outdir)
+            bundle = _collect_offline(svc, rounds, raw_dir)
 
     if include_image_test:
         bundle.image_test = run_image_test(svc, real_model if use_online else None)
