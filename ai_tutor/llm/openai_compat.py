@@ -56,10 +56,15 @@ class OpenAICompatProvider(LLMProvider):
         thinking = (self.extra or {}).get("thinking")
         if thinking:
             payload["thinking"] = thinking
-        if json_schema and self.supports_json_mode:
-            # 注意：部分提供方（实测 DeepSeek）在使用 response_format=json_object 时
-            # 要求提示词中必须出现 "json" 字样，否则直接返回 400。
-            # 这里做前置判断，宁可不启用 JSON 模式，也不让整次调用失败。
+        # JSON 模式（response_format=json_object）默认**关闭**。
+        # 实测 DeepSeek-V4 开启后会出现三种静默损坏（finish_reason 仍是 stop）：
+        #   ① 正文开头被吃掉（"【题型判断】…" 变成 "{0}{0}\)…"）
+        #   ② 只返回 JSON，正文整段消失
+        #   ③ 返回大量前导空白 + JSON，正文被压到 JSON 里
+        # 我们的输出契约本身已经要求"正文 + 末尾附 JSON"，不依赖这个参数；
+        # 需要严格 JSON 的提供方（如 OpenAI）可在 config.json 里显式打开 json_mode。
+        json_mode = bool((self.extra or {}).get("json_mode"))
+        if json_schema and self.supports_json_mode and json_mode:
             if "json" in "\n".join(m.content for m in messages).lower():
                 payload["response_format"] = {"type": "json_object"}
         if tools and self.supports_tools:

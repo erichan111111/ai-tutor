@@ -37,10 +37,23 @@
     return esc(text).replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
   }
 
+  /**
+   * 渲染模型回答。
+   *
+   * 回答里可能同时出现 Markdown、LaTeX 公式和用空格排版的 ASCII 图，
+   * 所以交给 /static/md.js 的结构化渲染器（零依赖，先转义再拼 HTML）。
+   * 它的输出是安全的：任何模型文本都会先被转义，HTML 只由渲染器自己拼装。
+   * 若 md.js 未加载（例如旧缓存），退回最小实现，保证页面不至于空白。
+   */
   function fmtAnswer(text) {
-    let html = esc(text || "");
-    html = html.replace(/【([^】]{1,24})】/g, '<strong>【$1】</strong>');
-    return html;
+    var raw = text == null ? "" : String(text);
+    if (typeof window.renderRichText === "function") {
+      try { return window.renderRichText(raw); } catch (e) { /* 退回简单渲染 */ }
+    }
+    return '<p class="md-p">' +
+      esc(raw).replace(/【([^】]{1,24})】/g, '<span class="sec-tag">$1</span>')
+              .replace(/\n/g, "<br>") +
+      "</p>";
   }
 
   async function api(path, options) {
