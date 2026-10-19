@@ -267,6 +267,50 @@ class StudyWorkspace:
         self.db._exec("DELETE FROM study_notes WHERE id=?", [note_id])
         return {"deleted": True}
 
+    def delete_task(self, task_id: str) -> dict:
+        """删除单个任务（"完成"是标记，这个是真的从计划里移除）。"""
+        task_id = text_field(task_id, "任务编号", 100)
+        if not self.db._row("SELECT id FROM study_tasks WHERE id=?", [task_id]):
+            raise LookupError("任务不存在")
+        self.db._exec("DELETE FROM study_tasks WHERE id=?", [task_id])
+        return {"deleted": True, "task_id": task_id}
+
+    def course_delete_preview(self, course_id: str) -> dict:
+        """删除前先算清楚会连带删掉什么，供界面确认弹窗使用。"""
+        course = self.course(course_id)
+        tasks = self.db._row("SELECT COUNT(*) AS n FROM study_tasks WHERE course_id=?", [course_id])["n"]
+        notes = self.db._row("SELECT COUNT(*) AS n FROM study_notes WHERE course_id=?", [course_id])["n"]
+        reviews = self.db._row(
+            "SELECT COUNT(*) AS n FROM study_reviews r JOIN study_notes n ON n.id=r.note_id "
+            "WHERE n.course_id=?", [course_id])["n"]
+        return {"course": course, "tasks": tasks, "notes": notes, "reviews": reviews,
+                "total": tasks + notes}
+
+    def delete_course(self, course_id: str, confirm: bool = False) -> dict:
+        """彻底删除课程，连同它的任务、复习卡片与自评记录。
+
+        注意：答疑会话（turns）**不会**被删除——那是原始问答记录，
+        卡片里只是引用了 turn id；删课程不应影响历史会话。
+
+        必须显式传 confirm=True，避免误删。返回删除了多少条，便于界面反馈。
+        """
+        course_id = text_field(course_id, "课程编号", 100)
+        if not confirm:
+            raise ValueError("删除课程需要显式确认（confirm=true）")
+        preview = self.course_delete_preview(course_id)
+        # 顺序：先删引用方（自评 → 卡片 → 任务），最后删课程本身。
+        # 虽然 study_reviews 上有 ON DELETE CASCADE，但这里显式删除，
+        # 不依赖 PRAGMA foreign_keys 的开关状态，行为更可预期。
+        self.db._exec(
+            "DELETE FROM study_reviews WHERE note_id IN "
+            "(SELECT id FROM study_notes WHERE course_id=?)", [course_id])
+        self.db._exec("DELETE FROM study_notes WHERE course_id=?", [course_id])
+        self.db._exec("DELETE FROM study_tasks WHERE course_id=?", [course_id])
+        self.db._exec("DELETE FROM courses WHERE id=?", [course_id])
+        return {"deleted": True, "course_id": course_id,
+                "removed_tasks": preview["tasks"], "removed_notes": preview["notes"],
+                "removed_reviews": preview["reviews"]}
+
     def snapshot(self, today: str) -> dict:
         today = day(today)
         courses, tasks, notes = self.courses(), self.tasks(), self.notes()

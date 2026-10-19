@@ -488,3 +488,18 @@ th { background:#f5f7ef; }
   dialog { padding:20px; } .page-heading h2 { font-size:24px; }
 }
 @media (prefers-reduced-motion:reduce) { *, *::before, *::after { animation:none !important; transition:none !important; scroll-behavior:auto !important; } }
+
+/* 危险操作按钮（删除课程 / 删除任务）：浅底红字，hover 才填满，
+   避免误触，也避免它在页面上抢走主操作的注意力。 */
+button.danger {
+  color: var(--danger);
+  border-color: color-mix(in srgb, var(--danger) 35%, transparent);
+  background: color-mix(in srgb, var(--danger) 6%, transparent);
+}
+button.danger:hover {
+  background: var(--danger);
+  border-color: var(--danger);
+  color: #fff;
+}
+button.ghost.small.danger { color: var(--danger); }
+button.ghost.small.danger:hover { color: #fff; background: var(--danger); }

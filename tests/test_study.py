@@ -107,6 +107,43 @@ class StudyTests(StudyFixture, unittest.TestCase):
         self.study.archive_course(c["id"], False)
         self.assertEqual(len(self.study.snapshot(self.today)["due_notes"]), 1)
 
+    def test_delete_task_removes_it_from_plan(self):
+        c = self.course()
+        task = self.study.add_task(dict(course_id=c["id"], title="临时任务", topic="极限",
+                                        due_date=self.today, minutes=20))
+        self.assertEqual(len(self.study.tasks(c["id"])), 1)
+        self.study.delete_task(task["id"])
+        self.assertEqual(len(self.study.tasks(c["id"])), 0)
+        with self.assertRaises(LookupError):
+            self.study.delete_task(task["id"])
+
+    def test_delete_course_requires_confirm_and_cascades(self):
+        c = self.course()
+        self.study.plan(c["id"], self.today)
+        note = self.note(course_id=c["id"])
+        self.study.review(note["id"], "good", self.today)
+        tasks = len(self.study.tasks(c["id"]))
+        self.assertGreater(tasks, 0)
+
+        preview = self.study.course_delete_preview(c["id"])
+        self.assertEqual(preview["tasks"], tasks)
+        self.assertEqual(preview["notes"], 1)
+        self.assertEqual(preview["reviews"], 1)
+
+        # 没有显式确认必须被拒绝
+        with self.assertRaises(ValueError):
+            self.study.delete_course(c["id"])
+        self.assertTrue(self.study.courses(), "未确认时不应删除任何课程")
+
+        result = self.study.delete_course(c["id"], confirm=True)
+        self.assertEqual(result["removed_tasks"], tasks)
+        self.assertEqual(result["removed_notes"], 1)
+        self.assertEqual(result["removed_reviews"], 1)
+        self.assertEqual(self.study.courses(), [])
+        self.assertEqual(self.study.tasks(), [])
+        self.assertEqual(self.study.notes(), [])
+        self.assertEqual(self.study.snapshot(self.today)["due_notes"], [])
+
     def test_saved_ai_answer_has_server_verified_provenance(self):
         c = self.course()
         answer = self.svc.ask("帮我解释 TCP", module="M4", course_id=c["id"])

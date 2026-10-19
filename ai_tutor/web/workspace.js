@@ -30,7 +30,7 @@ window.StudyUI = (() => {
     select.value = value;
   }
   function taskHtml(t) {
-    return `<div class="task-row ${t.done ? "done" : ""}"><label class="checkbox"><input type="checkbox" data-complete="${esc(t.id)}" ${t.done ? "checked" : ""}><span><strong>${esc(t.title)}</strong><small>${esc(t.course_name)} · ${t.minutes} 分钟 · ${esc(t.due_date)}${!t.done && t.due_date < today() ? " · 待补上" : ""}</small></span></label><div class="actions"><button data-learn="${esc(t.id)}">${t.kind === "recall" ? "开始自测" : "去学习"}</button>${!t.done ? `<button data-move="${esc(t.id)}" class="ghost small">调整日期</button>` : ""}</div></div>`;
+    return `<div class="task-row ${t.done ? "done" : ""}"><label class="checkbox"><input type="checkbox" data-complete="${esc(t.id)}" ${t.done ? "checked" : ""}><span><strong>${esc(t.title)}</strong><small>${esc(t.course_name)} · ${t.minutes} 分钟 · ${esc(t.due_date)}${!t.done && t.due_date < today() ? " · 待补上" : ""}</small></span></label><div class="actions"><button data-learn="${esc(t.id)}">${t.kind === "recall" ? "开始自测" : "去学习"}</button>${!t.done ? `<button data-move="${esc(t.id)}" class="ghost small">调整日期</button>` : ""}<button data-del-task="${esc(t.id)}" class="ghost small danger">删除</button></div></div>`;
   }
   function bindTasks(root) {
     root.querySelectorAll("[data-complete]").forEach(el => el.addEventListener("change", async () => {
@@ -52,6 +52,14 @@ window.StudyUI = (() => {
       openDialog("调整学习任务", `<label for="taskTitle">任务名称</label><input id="taskTitle" name="title" maxlength="200" value="${esc(task.title)}" required><label for="taskDate">计划日期</label><input id="taskDate" name="due_date" type="date" value="${esc(task.due_date)}" required><label for="taskMinutes">预计分钟</label><input id="taskMinutes" name="minutes" type="number" min="5" max="480" value="${task.minutes}" required>`, async form => {
         await api("/api/study/task/update", {id:task.id, due_date:form.get("due_date"),title:form.get("title"),minutes:Number(form.get("minutes"))});
       });
+    }));
+    // 删除单个任务：只是从计划里移除，"完成"是打勾标记，两者不同
+    root.querySelectorAll("[data-del-task]").forEach(el => el.addEventListener("click", () => {
+      const task = data.tasks.find(t => t.id === el.dataset.delTask);
+      if (!task) return;
+      openDialog("删除学习任务",
+        `<p>确认删除任务「${esc(task.title)}」？</p><p class="hintline">只是想标记做完了，请用左边的勾选框；删除后该任务从计划中消失。</p>`,
+        async () => { await api("/api/study/task/delete", {id: task.id}); });
     }));
   }
   function render() {
@@ -78,10 +86,26 @@ window.StudyUI = (() => {
     box.hidden = !c;
     if (!c) return;
     const tasks = data.tasks.filter(t => t.course_id === c.id);
-    box.innerHTML = `<div class="panel-head"><h2>${esc(c.name)} · 复习计划</h2><div class="actions"><button id="editCourse">编辑目标</button><button id="archiveCourse">${c.archived ? "恢复课程" : "归档课程"}</button></div></div><p class="hintline">范围：${esc(c.topics.join("、"))}。修改目标不覆盖已有任务；请按新目标手动调整日期。归档后暂停今日提醒，记录仍保留。</p><div class="actions"><button id="planCourse" class="primary" ${c.archived ? "disabled" : ""}>${tasks.some(t => t.plan_key) ? "检查计划安排" : "安排复习任务"}</button><button id="addTask" ${c.archived ? "disabled" : ""}>添加自定义任务</button><button id="askCourse">围绕这门课答疑</button></div><p id="planWarning" class="notes" role="status">${c.over_capacity ? "有未完成任务排在考试之后，请调整时间或复习范围。" : "按每日预算安排梳理、练习、闭卷自测。"}</p><div id="courseTasks">${tasks.length ? tasks.map(taskHtml).join("") : empty("计划还是一张白纸", "点击安排复习任务，或添加你自己的学习安排。")}</div>`;
+    box.innerHTML = `<div class="panel-head"><h2>${esc(c.name)} · 复习计划</h2><div class="actions"><button id="editCourse">编辑目标</button><button id="archiveCourse">${c.archived ? "恢复课程" : "归档课程"}</button><button id="deleteCourse" class="danger">删除课程</button></div></div><p class="hintline">范围：${esc(c.topics.join("、"))}。修改目标不覆盖已有任务；请按新目标手动调整日期。归档后暂停今日提醒，记录仍保留；删除则彻底清空该课程的任务与卡片。</p><div class="actions"><button id="planCourse" class="primary" ${c.archived ? "disabled" : ""}>${tasks.some(t => t.plan_key) ? "检查计划安排" : "安排复习任务"}</button><button id="addTask" ${c.archived ? "disabled" : ""}>添加自定义任务</button><button id="askCourse">围绕这门课答疑</button></div><p id="planWarning" class="notes" role="status">${c.over_capacity ? "有未完成任务排在考试之后，请调整时间或复习范围。" : "按每日预算安排梳理、练习、闭卷自测。"}</p><div id="courseTasks">${tasks.length ? tasks.map(taskHtml).join("") : empty("计划还是一张白纸", "点击安排复习任务，或添加你自己的学习安排。")}</div>`;
     bindTasks($("#courseTasks"));
     $("#editCourse").onclick = () => courseDialog(c);
     $("#archiveCourse").onclick = async e => { e.target.disabled = true; try { await api("/api/study/archive", {course_id:c.id,archived:!c.archived}); await refresh(); } catch(err) { e.target.disabled = false; notify(err.message); } };
+    $("#deleteCourse").onclick = () => {
+      // 先取预览，让用户看到"到底会删掉多少东西"，再要求二次确认
+      const own = tasks.length;
+      const ownNotes = (data.notes || []).filter(n => n.course_id === c.id).length;
+      const lines = [`确认删除课程「${esc(c.name)}」？`];
+      if (own || ownNotes) {
+        lines.push(`<p class="notes">将同时删除：</p><ul>` +
+          (own ? `<li>${own} 个学习任务</li>` : "") +
+          (ownNotes ? `<li>${ownNotes} 张复习卡片（含自评记录）</li>` : "") +
+          `</ul>`);
+      }
+      lines.push('<p class="hintline">答疑原始会话不会被删除。此操作不可撤销 —— 如果只是想暂停提醒，请用「归档课程」。</p>');
+      openDialog("删除课程", lines.join(""), async () => {
+        await api("/api/study/course/delete", {course_id: c.id, confirm: true});
+      });
+    };
     $("#planCourse").onclick = async e => { e.target.disabled = true; try { const res = await api("/api/study/plan",{course_id:c.id,today:today()}); await refresh(); $("#planWarning").textContent = res.warning || res.basis; } catch(err) { e.target.disabled = false; notify(err.message); } };
     $("#askCourse").onclick = () => bridge.startLearning(c.id, "", "auto");
     $("#addTask").onclick = () => openDialog("添加学习任务", `<label for="taskTitle">具体要做什么</label><input id="taskTitle" name="title" maxlength="200" placeholder="例如：独立完成教材第 3 章习题" required><div class="row"><div><label for="taskDate">日期</label><input id="taskDate" name="due_date" type="date" value="${today()}" required></div><div><label for="taskMinutes">预计分钟</label><input id="taskMinutes" name="minutes" type="number" min="5" max="480" value="25" required></div></div>`, async f => { await api("/api/study/task",{course_id:c.id,title:f.get("title"),due_date:f.get("due_date"),minutes:Number(f.get("minutes"))}); });

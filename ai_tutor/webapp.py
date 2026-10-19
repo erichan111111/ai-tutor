@@ -211,6 +211,11 @@ class Handler(BaseHTTPRequestHandler):
             if path == "/api/study/archive":
                 self._send_json(study.archive_course(payload.get("course_id"), payload.get("archived")))
                 return
+            if path == "/api/study/course/delete":
+                # 删除课程会连带清空它的任务、卡片与自评；必须显式带 confirm=true
+                self._send_json(study.delete_course(payload.get("course_id"),
+                                                    bool(payload.get("confirm"))))
+                return
             if path == "/api/study/plan":
                 self._send_json(study.plan(payload.get("course_id"), today))
                 return
@@ -219,6 +224,9 @@ class Handler(BaseHTTPRequestHandler):
                 return
             if path == "/api/study/task/update":
                 self._send_json(study.update_task(payload.get("id"), {k: v for k, v in payload.items() if k != "id"}))
+                return
+            if path == "/api/study/task/delete":
+                self._send_json(study.delete_task(payload.get("id")))
                 return
             if path == "/api/study/note":
                 self._send_json(study.add_note(payload, today))
